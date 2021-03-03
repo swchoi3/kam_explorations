@@ -1,0 +1,372 @@
+title: 'Exploration 4: How can we know when a test is a good test?'
+author: "Jake Bowers"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output:
+  pdf_document:
+    number_sections: true
+    fig_caption: yes
+    fig_height: 8
+    fig_width: 8
+    latex_engine: xelatex
+    citation_package: biblatex
+    keep_tex: true
+geometry: "left=1.25in,right=1.25in,top=1in,bottom=1in"
+graphics: yes
+mainfont: "Helvetica"
+fontsize: 11pt
+bibliography: classbib.bib
+biblio-style: "authoryear-comp,natbib"
+---
+
+<!-- Make this document using library(rmarkdown); render("exploration1.Rmd") -->
+\input{mytexsymbols}
+
+
+```{r setup, echo=FALSE, results=FALSE, include=FALSE, cache=FALSE}
+library(here)
+source(here("rmd_setup.R"))
+```
+
+```{r loadlibs, echo=FALSE, include=FALSE, results=FALSE}
+library(tidyverse)
+library(coin)
+library(DeclareDesign)
+```
+
+The campaign consultant calls back. First, he is worried about the following
+analysis of a field experiment that randomly assigned newspaper advertisements
+within pairs of similar cities. 
+
+Before my analyst quit, she said that this next result was bad and that I should (1) do a 'randomization-justified test rather than a CLT+IID justified 'test' and (2) 'assess the realized false positive error rate of that test'. What should I do? What is the difference between the two tests?  I thought you just got a $p$-value from `lm` and now I'm confused about how you "justify" a test --- why or how would randomization justify a test?  Can you please do this for me? Can you explain what it means for "randomization to justify a test"? If randomization justifies one kind of test, then what justifies the $p$-values that I am used to seeing from my good old friend the `lm` command? (Maybe the later code will help you do these tasks.) Here is my version: 
+
+```{r}
+news.df <- read.csv("news.df.csv")
+news.df<-read.csv("http://jakebowers.org/Data/news.df.csv")
+news.df$sF <- factor(news.df$s)
+news.df$zF <- factor(news.df$zF)
+thelmTest <- summary(lm(r ~ z, data = news.df))$coef[2, 4]
+```
+**KAM**:
+We assume that your questions refer to `thelmTest`. CLT+IID justified test relies on the relationship between your sample and the population and the nature of your sample. But first of all, let me explain to you the abbreviated terms you mentioned: the CLT and IID. CLT here denotes the central limit theorem, i.e., the distribution of sample follows the distribution of a population.And, IID refers to the Independent and Identical Distribution of your random variables. If your variables are independently distributed, it means that the values of your variables do not intervene or give additional information to other variables. And, if your variables are identically distributed, then your variables have the same distribution. In other words, if $\mu$ is the population mean, then the sample mean $\bar x$ is similar to $\mu$. Yet, the problem is that we do not know your parent population if we justify our test on CLT.  To assess the CLT and IID, large enough samples/observations (mostly 30 or more) are required, and it is hard to justify your test with CLT and IID because you have small data (your s and z variables show that you just have 8 observations/cities here). We show you an example by drawing density plots that the two variables you tested are not identically distributed.
+
+Based on those assessments, randomization is more justifiable for your test given your data. But, why does randomness matter to justify a test? Now let's turn to a randomization-justified test. Randomization-justified test means that your test stems from data or observations drawn by the principle of equal chance. More importantly, here you did an experiment that means you need random assignment (the basic meaning of randomization here), not random selection (drawing samples from population). For instance, here your have eight units (cities) where four of them is assigned the treatment group (having intervention/treatment) and the other four as the control group (without intervention), then the probability of  being randomly selected for treatment for  each city is $\frac{1}{2^4}$ or 0.0625. Such principle of randomization prevents biases, for instance, coming from the observer's or experimenter's personal intention. Also, randomization (random assignment in your experiment or random selection/sampling if you conduct observational study) suggests that both control and treatment variables have balanced covariates or pre-treatment variables or the characteristics of your data (the eight cities). Thus, a randomization-justified test is better (and more relevant) than a CLT+IID justified test for your experiment with small size of data/units/subjects. 
+ 
+In your `thelmTest`, your p-value is 0.925 for your test statistic (coefficient) of z 1.5. The p-value is the result of a permutation test where the values stems from the probability when you permute and recalculate the test statistic whether the result is equal or more extreme than the value of your origin of the test statistic (z = 1.5). A threshold called significance level $\alpha$, usually 0.05, justifies your p-value based on the distribution of such 'permutation and recalculation' (the probability distribution). As you got a very high p-value 0.925 (approaching 1 means very high probability), this means that your test statistic (coefficient) is typical (not significant) with the 'repeated test statistics' based on the permutation (shuffling the variable vector). 
+
+"But when I even showed this version to my analyst, she yelled something about an imprecise test statistic and typed this:"
+
+> Knowe that the estimates are the same forall lmtestes here but the information differess
+```{r}
+
+thelmTest1 <- summary(lm(r ~ z + sF, data = news.df))$coef[2, 4]
+news.df$rpaired <- with(news.df, r - ave(r, sF))
+news.df$zpaired <- with(news.df, z - ave(z, sF))
+thelmTest2 <- summary(lm(rpaired ~ zpaired, data = news.df))$coef[2, 4]
+newspaired <- group_by(news.df,s) %>% summarize(r = r[z==1] - r[z==0])
+thelmTest3 <- summary(lm(r~1,data=newspaired))$coef[1,4]
+thettest <- t.test(r ~ I(z == 0), paired = TRUE, data = news.df[order(news.df$sF), ])$p.value
+thettest2 <- oneway_test(r ~ zF | sF, data = news.df, distribution = exact())
+thettest3 <- oneway_test(r ~ zF | sF, data = news.df, distribution = asymptotic())
+set.seed(12345)
+thettest4 <- oneway_test(r ~ zF | sF, data = news.df, distribution = approximate(nresample = 1000))
+## coin::pvalue(thettest2)
+d_o_m <- difference_in_means(r ~ z, blocks = sF, data = news.df)
+thelmTest4 <- lm_robust(r~z,fixed_effects = ~s,data=news.df)
+## tidy(d_o_m)$p.value
+```
+
+> I get multiple different $p$-values here. Which should I trust? Are any of them *good* $p$-values? How would I know whether this test is a good and
+> useful test versus a misleading test? What do people mean when they talk about the size versus the level of a test? What is the difference between an unbiased estimator, a consistent estimator, an unbiased test (or a "valid test or an $\alpha$-level test")  and a consistent test? Please advise me! Maybe the code below will help you ---  I'm confused by much of it --- I just want to know whether I  can trust the $p$-values for the different least squares based tests that I just did. (Someone is also saying that these are tests based on a "difference of means test statistic". Also confusing to me. I thought I was modeling my data using a linear least squares model. Why would they say that?)
+
+**KAM**:
+Here you got p-values 0.6408 (`thelmTest1`, `thelmTest3`, and `thelmTest4`) and 0.4922 `thelmTest2`. Also, you got several p-values for t-tests including 0.6508 (`thettest), 0.8 (`thettest2`), 0.6 (`thettest3), 0.7 (`thettest4`). At a glance, those p-values are not 'good' as they are much higher than the critical value 0.05, meaning that the differences (when you run the t-test) or the regression coefficients (when you ran the linear model) between the two group (your treatment and control cities) are not significant. But, there is different information behind each p-value as you run your test statistics, either the regression or the t-test. In this regard, As suggested by Bind and Rubin (2020)[^1], you should choose the p-value coming from Fisher-exact (or Fisher-sharp) hypothesis test such as the one from `thettest2`, instead of the one from the asymptotic test `thettest3`. It is because the Fisher-exact p-value relies on the actual randomization procedure that has limited underlying assumptions. For the regression tests, we believe that the last one, the robust OLS in `thelmTest4`, is the p-value you can trust better that the other though it has the same values as the two other tests (thelmTest1 and thelmTest3). Meanwhile, we do not recommend to trust the p-value in `thelmTest3` if you want to seek your treatment effect in your cities as the test with r~1 basically assume that there is no independent variables (or they are zero or no influence) so it only generates the intercept or the mean of r as the natural prediction.
+
+[^1]: Bind, M-AC, and D. B. Rubin. "When possible, report a Fisher-exact P value and display its underlying null randomization distribution." Proceedings of the National Academy of Sciences 117.32 (2020): 19151-19158.
+
+Meanwhile, the phrase "difference of means test statistic" basically refers to t-test or Student's t-test when the underlying assumption is equal variance between the treated and control groups. Otherwise, people also refer such a phrase to Welch's test which does not assume equal variance for the two variables like what Bind and Rubin (2020) did in their article on Fisher-exact p-value.  The test investigates whether or not the difference of mean between two groups (say, your treatment and control group) or variables is significant. And, the size of a test refers to the number of data you tested while the level of a test is related to the significance level $\alpha$ you achieved. Also, in an experimental data like what you have, the level may refer to the level of units that you have here is city level. Thus, you may have state-level or household-level as well.
+
+About the "adjective" terms on your estimator and test, you might find in Rosenbaum's Glossary (2013, p.363-367) but they are not clear enough if we just simply copy the definitions. So, we provide (we hope) clearer definitions, as follows. An unbiased estimator means that your estimator or your test statistic is accurate to approximate the parameter. For instance, your sample mean (if that is your test statistic) is similar to the mean of population. Meanwhile, a consistent estimator (if you look at in a text book) means that the estimator converges in probability to its estimand as sample increases (Dodge 2003 in The Oxford Dictionary of Statistical Terms). But, you might be confused with the new term estimand or the meaning of "converges in probability". Here, estimand is the true value of the parameter being estimated, and converges in probability here means that it is getting close to the estimate when your data increases. Now, how are similar terms for the statistical tests? It relates to the power of your hypothesis testing. Thus, here unbiased test means that the test is more likely to reject false hypothesis than to reject true hypothesis so it prevents the test from a 'false positive' (the type 1 error that you also ask the term below). Meanwhile, the consistent test means that the test is right when the sample size is large enough; "right" here means that the rejection of $H_0$ is just about certain when the $H_A$ is true. 
+
+
+"Here is more from my old analyst before she ~~fled~~ retired. She left this fragment ~~before the time-warp closed~~:"
+
+| And ife thou noest not the truthe makee thy truthe zeeroe
+| And so doe shufule in acorde withe thy desine
+|   And macke the teste withe each shoofule
+|   And colecte the $p$ease
+|   And thene comparee the manie $p$eaz to a dystrybution uniforme
+|   And focuse on thy proportione $p$ undere $\alpha$ if thou reliest upone a singul $\alpha$.
+
+
+> I am unclear about why the analyst never learned to spell, or why she wore chainmail, or called me "My liege" or was so profligate with the letter e. I am also unclear about the reference to 'uniforme' and 'peas' so I tried to make this translation: (KAM: *can we just quickly say this was hilarious?*)
+
+| If you do not know the truth, make the truth zero
+| And shuffle according to your design
+| And make (or do) the test with each shuffle
+| And collect the ?peas? ?ps? ?peace? ?pieces?
+| And then compare the many ?peas? to a uniform distribution
+| And focus on the proportion of $p$ less than $\alpha$ if you are using a single $\alpha$.
+
+> My analyst vanished while muttering about 'powere of thy teste', but the campaign is much more interested in whether the test may be **misleading** or **invalid** than about finding a more powerful test.  Here is an example that I found, but it seems to use `lmrob` and I don't know what that does either. Can you please explain what is happening below? Can you change it to be more relevant (and perhaps work in case you find some errors)? I assume that you will closely inspect every R object here so that you can explain every piece of code, right?
+
+```{r repeat_exp_design, eval=TRUE}
+library(randomizr)
+## Make a function to re-run the experiment
+newexperiment <- function(z, b) {
+  ## A function to randomly assign treatment within pair
+  ## z = treatment assignment that is completely randomly assigned within block
+  ## b = a block indicator
+  ## one method unsplit(lapply(split(z, b), sample), b)
+  ## Another method uses the randomizr package to randomly
+  ## assign treatment within each block (here, a block is a pair of cities)
+  randomizr::block_ra(blocks = b, m = 1)
+}
+## Test: does it run
+with(news.df,newexperiment(z = z, b = sF))
+## Test: does it randomly assign exactly one city within pair
+set.seed(1234)
+newexps <- replicate(100, with(news.df, newexperiment(z = z, b = sF)))
+Bmat <- model.matrix(~ sF - 1, data = news.df)
+stopifnot(all((t(Bmat) %*% newexps) == 1))
+```
+
+**KAM**:
+You use the `lmrob` function in a code chunk far below. In the code chunk below, you seem running a function for a new experiment with your eight units (your cities). If you are asking the codes in chunk {repeat_exp_design}, then we suggest that the codes are trying to generate new experiment (`newexperiment`) by randomly assigning subjects (your 8 cities) into a pair, i.e, using block_ra() function within the randomizr package. Then you evaluate your function whether it works using with().  After you replicate such assignments in a hundred, you evaluate that random assignment of your data with stopifnot() to investigate whether each pair is correct for one city. And all of the codes work well and you succeed in randomly assigning the cities in pairs.
+
+However, you concern with a robustness of your test by employing `lmrob`, instead of concerning with the power of your test (that relies on the probability of your p-value less than or equal to 0.05 when $H_0$ is false and $H_A$ is true instead). Since you asked about the `lmrob` that relates to robust linear model (regression) a bit earlier, we are of course happy to tell you about that. First of all, robust regression deals with outliers or violated data that may influence regression models, while removing outliers is not always a good idea to generate an estimator (as it will reduce the size of your sample/unit), especially with a small data set like your 8 cities. In robust regression, the values or weight of such outliers (measured for example by Cook's Distance as we learned last two weeks) are reduced to be less than the observations that are not outliers. And one way (the other includes S-Estimation and M-Estimation) to handle such outliers (or influential points) can be done through running MM Estimation like with your `lmrob` did. "M'' here refers to the maximum likelihood type of estimation. MM Estimation seeks to obtain estimators that have high breakdown points and are more efficient, i.e., the proportion of observations (or the fraction of your data) that an estimator can handle before it gives an incorrect result (Susanti and Pratiwi 2014)[^2]. "Handle" here means that the proportion can be given arbitrary values (i.e., the finite breakdown point is 1/n and the asymptotic (infinite) breakdown point is zero) without making the estimator arbitrarily bad. Thus, the larger breakdown point means that better the estimator (which is called a resistant estimator) (see Geyer 2006, for Breakdown Point)[^3]. 
+
+Such intention returns to your `lmrob` where it refers to `sim_p` within your `errratefn` and `powerfn` functions. We are not sure of what you are doing with the two functions. But our understanding in both errratefn and powerfn functions is that you try to generate an evaluation of false positive rate when using lmrob. You create a loop with foreach() function before creating a new experiment by pairing the units (or block). 
+
+
+[^2]: Susanti, Yuliana, and Hasih Pratiwi. "M estimation, S estimation, and MM estimation in robust regression." International Journal of Pure and Applied Mathematics 91.3 (2014): 349-360.
+[^3]: Geyer, Charles J. "Breakdown point theory notes." Class Notes on Nonparametric Statistics (2006).
+
+
+The analyst said that the following code actually tests the "sharp null hypothesis of no relationship" between z and r. But I thought that you had to use something like `lm` or `t.test` to do a hypothesis test. Like you estimated and effect and asked "is this estimate statistically significant". Why isn't she doing that below? Is there something confused about saying the "estimate is statistically significant"? I tried re-reading [Chapter 2, @fisher:1935] on "The Lady Tasting Tea" and [Chapter 1, @rosenbaum2017observation], [chapter 2, @rosenbaum2010design] and noticed that he didn't talk about estimates at all there either. What is going on? Don't we need estimates to do hypothesis tests? Is there some confusion here that has made its way into the social sciences?
+
+*KAM:* Yes, you don’t involve anything like ‘estimation’ or ‘statistically significant’ for testing a sharp null hypothesis. Lm or t.test are for estimation, in other words, approximating the value of a population parameter on the basis of a sample statistic. For estimation, we get asymptotic p-value which is calculated using an “approximation” to the true distribution. Fisher’s null hypothesis testing is not for estimation! As you see from ‘the lady tasting tea’ experiment, the researcher exactly knows the true distribution--the probability of possible outcomes. A p-value calculated using the true distribution is called an exact p-value. How do we know the exact distribution? Randomization! Probability enters the experiment only through the random assignment of treatment, and hence the experimenter has a full control over the process (Rosenbaum 2002b; p17). 
+
+You have observations for 8 cities, just like the 8 cups for the Lady tasting Tea! But the difference is that the cups could be randomly assigned for the sake of experiment, but I assume that you only have the observational data -- so the treatment was not randomly assigned to the 8 cities. There is still a way we can try to mimic the concept of randomization--by bootstrapping! I will explain it in detail a bit later, but let me give you a brief idea. Similar to how Fisher used permutation to get the distribution of possible outcomes, you mimic that by getting estimation by resampling observations with replacement (shuffling) and iterating that many times to get the distribution of estimations.
+
+```{r dotests, eval=TRUE}
+testStat1 <- function(y, z, b) {
+  ## y is outcome
+  ## z is treatment (binary here)
+  ## b is block
+  if (length(unique(b)) == 1) {
+    ## if only one block, then this is a simple mean difference
+    return(mean(y[z == 1]) - mean(y[z == 0]))
+  } else {
+    z <- z[order(b)]
+    ys <- y[order(b)]
+    ysdiffs <- ys[z == 1] - ys[z == 0] ## assuming sorted by pair
+    meandiffs <- mean(ysdiffs)
+    return(meandiffs)
+  }
+}
+testStat2 <- function(y, z, b) {
+  ## y is outcome
+  ## z is treatment (binary here)
+  ## b is block
+  y <- rank(y)
+  if (length(unique(b)) == 1) {
+    ## if only one block, then this is a simple mean difference
+    return(mean(y[z == 1]) - mean(y[z == 0]))
+  } else {
+    z <- z[order(b)]
+    ys <- y[order(b)]
+    ysdiffs <- ys[z == 1] - ys[z == 0] ## assuming sorted by pair
+    meandiffs <- mean(ysdiffs)
+    return(meandiffs)
+  }
+}
+
+obsTestStat1 <- with(news.df, testStat1(y = r, z = z, b = sF))
+obsTestStat2 <- with(news.df, testStat2(y = r, z = z, b = sF))
+set.seed(12345)
+refDistNull1 <- replicate(1000, with(news.df, testStat1(y = r, z = newexperiment(z = z, b = sF), b = sF)))
+refDistNull2 <- replicate(1000, with(news.df, testStat2(y = r, z = newexperiment(z = z, b = sF), b = sF)))
+mean(refDistNull1 >= obsTestStat1)
+mean(refDistNull2 >= obsTestStat2)
+## Rosenbaum footnote on 2-sided p-values
+2 * min(mean(refDistNull1 >= obsTestStat1), mean(refDistNull1 <= obsTestStat1))
+2 * min(mean(refDistNull2 >= obsTestStat2), mean(refDistNull2 <= obsTestStat2))
+## Just for fun plot the distributions that represent the null hypothesis 
+## and the observed values for the test statistics.
+plot(density(refDistNull2), xlim = range(c(refDistNull1, refDistNull2)))
+rug(refDistNull2, line = -1, lwd = 2)
+lines(density(refDistNull1), lty = 2)
+rug(refDistNull1, line = .5, lwd = 2)
+abline(v = obsTestStat2)
+abline(v = obsTestStat1)
+```
+
+I haven't interpreted any of these $p$-values yet because I am not sure if I can trust them. I had thought I had to make a lot of assumptions to interpret a $p$-value, too. Before we proceed can you interpret one of these $p$-values in substantive terms? Can you explain what just happened in that code in regards hypothesis testing? How did we test a hypothesis? How did the two tests of the same hypothesis differ?
+
+*KAM*: 
+The code for the function "TestStat1" and "testStat2" are comparing the difference in means of matched pair differences for treated and non-treated data. We multiply the values (means) by two in order to get a two-tailed p-value statistic. Observing the p-value, we see a value of 0.786 for TestStat1, and 0.604 for TestStat2. Though these are not ideal (considering the standard for rejecting the null hypothesis is 0.05), as mentioned above its important to go under the hood and check what's going on before simply throwing our hands up in despair at another insignificant result (as grad students are wont to do). Since we're using Fisher's Null Hypothesis test, think of the p-values as being the probability of the mean difference of voter turnout being equal to or larger than the sample mean by CHANCE. We can check if there is a treatment effect by checking the probability mentioned previously against the level of the test, which is 0.05 (the somewhat arbitrary cutoff returns!). Based on the results, we can argue there is in fact a treatment effect (by rejecting the null hypothesis that Rt = Rc)
+ 
+As mentioned above, there's not a whole lot of data for us to work with, but by utilizing randomization (or at least putting on a randomization-like poncho over our test) and bootstrapping the test (which is what refDistNull1 & 2 contain [I think...?]) we are able to create permutations, store them in objects, and use them to calculate p-values.  
+***
+
+Now my analyst gave me code to learn which $p$-value to choose to use except she was looking at `lmrob` but I want to assess the $p$-values from `lm`. She said: "Nowe seeke the errore ande thee powere of othere teste statistices"
+
+```{r eval=TRUE}
+## doParallel will not work on all machines. But parallel is faster than serial.
+library(foreach)
+library(doParallel)
+library(robustbase)
+cl <- makeCluster(4) ## 4 cores
+registerDoParallel(cl)
+errratefn <- function(simulations, trt, outcome, block) {
+  require(robustbase)
+  outpaired <- outcome - ave(outcome, block)
+  output <- foreach(1:simulations,
+    .packages = "robustbase",
+    .export = c("newexperiment"),
+    .combine = "c"
+  ) %dopar% {
+    ## First make a new experiment with no relationship between z and y
+    ## since we know that there is no effect, then we can assess the false positive rate of
+    ## lmrob
+    newz <- newexperiment(z = trt, b = block)
+    newzpaired <- newz - ave(newz, block)
+    sim_p <- summary(lmrob(outpaired ~ newzpaired))$coefficients[2, 4]
+    return(sim_p)
+  }
+  return(output)
+}
+set.seed(12345)
+results2a <- errratefn(100, trt = news.df$z, outcome = news.df$r, block = news.df$sF)
+results2b <- errratefn(100, trt = news.df$z, outcome = news.df$r, block = news.df$sF)
+results2c <- errratefn(100, trt = news.df$z, outcome = news.df$r, block = news.df$sF)
+## Hmmm... Does this next suggest too few simulations? Too much simulation error?
+## I wonder what the actually false positive rates are
+sd(c(mean(results2a < .05), mean(results2b < .05), mean(results2c < .05)))
+```
+
+> What does that mean? I get the feeling that the analysis didn't actually provide the false positive error rates, but was more interested in calculating how the error rates differed between runs of the simulation. What I want to know is whether I can trust my tests. Once you have changed the code to not use `lmrob`, what do you think? Are these tests controlling the false postive rate at the promised levels? If I used one of these tests and said "Significant! p<.05!" would I be likely to be wrong only 5% of the time or perhaps wrong more often? (I looked at the [Glossary, @rosenbaum2010design] to learn about "level" and "size" of tests but still don't really get it.)
+
+```{r eval=TRUE}
+##Changing from lmrob to lm
+library(foreach)
+library(doParallel)
+library(robustbase)
+cl <- makeCluster(4) ## 4 cores
+registerDoParallel(cl)
+
+errratefn_norob <- function(simulations, trt, outcome, block) {
+  require(robustbase)
+  outpaired <- outcome - ave(outcome, block)
+  output <- foreach(1:simulations,
+    .packages = "robustbase",
+    .export = c("newexperiment"),
+    .combine = "c"
+  ) %dopar% {
+    ## First make a new experiment with no relationship between z and y
+    ## since we know that there is no effect, then we can assess the false positive rate of
+    ## lmrob
+    newz <- newexperiment(z = trt, b = block)
+    newzpaired <- newz - ave(newz, block)
+    sim_p <- summary(lm(outpaired ~ newzpaired))$coefficients[2, 4]
+    return(sim_p)
+  }
+  return(output)
+}
+set.seed(12345)
+results2a <- errratefn_norob(100, trt = news.df$z, outcome = news.df$r, block = news.df$sF)
+results2b <- errratefn_norob(100, trt = news.df$z, outcome = news.df$r, block = news.df$sF)
+results2c <- errratefn_norob(100, trt = news.df$z, outcome = news.df$r, block = news.df$sF)
+## Hmmm... Does this next suggest too few simulations? Too much simulation error?
+## I wonder what the actually false positive rates are
+sd_norob<- sd(c(mean(results2a < .05), mean(results2b < .05), mean(results2c < .05)))
+```
+
+*KAM*: What's interesting here is that the standard deviations of the means are roughly HALF when we do not use 'lmrob' (the results from using lmrob are 0.03, whereas the results from not using lmrob and just lm is roughly 0.015). What could this mean? Well, remember that part of the robustness of robust regressions compared to OLS is less sensitivity to outliers (meaning you can keep more data without having to toss out outliers which is a big no-no, while retaining some measure of predictive strength). [*Clarification/Question/Answer to be asked in class*]
+
+> Then the analyst said, "Heere find ye perhaps a function of powerre". This will be useful in the future (if I can get the pesky `lmrob` function out of there, or maybe use it, I'm not sure). I'd like to know how big of an effect I could detect if I used $\alpha=.05$ and decided to use 80% power.
+```{r eval=TRUE}
+powerfn <- function(simulations, trt, outcome, block, effect) {
+  require(robustbase)
+  output <- foreach(1:simulations,
+    .packages = "robustbase",
+    .export = c("newexperiment"),
+    .combine = "c"
+  ) %dopar% {
+    newz <- newexperiment(z = trt, b = block) ## a new experiment with no relationship between z and y
+    newzpaired <- newz - ave(newz, block)
+    newoutcome <- outcome - newz * effect
+    newoutcomePaired <- newoutcome - ave(newoutcome, block)
+    sim_p <- summary(lmrob(newoutcomePaired ~ newzpaired))$coefficients[2, 4]
+    return(sim_p)
+  }
+  return(output)
+}
+set.seed(12345)
+## Hmm are these right?
+taus <- c(0, .5, 1, 2, 3, 10)
+somepower <- sapply(taus, function(effectSize) {
+  res <- powerfn(1000, trt = news.df$z, outcome = news.df$r, block = news.df$sF, effect = effectSize)
+  return(mean(res < .05))
+})
+plot(taus, somepower)
+```
+
+```{r multiple_testing}
+library(RItools)
+## Using xBalance just to get a bunch of p-values testing the sharp null hypothesis of no differences between treated and control groups, justified ## by randomization, but using a large-sample approximation.
+xb1 <- xBalance(z ~ rpre + medhhi1000 + medage + cands + blkpct, strata = list(pair = ~sF), data = news.df, report = "all")
+theps <- xb1$results[, "p", ]
+```
+
+Ok. Now that I know that the size of the exact or permutation-based test is less than or equal to the level by substituting appropriate code into the error assessement function, I showed the following to my analyst and she yelled at me again!  This time about something she called 'multiple testing' or 'family wise error rate'. I don't get it. I did 5 tests and two of them seem significant at $\alpha=.1$. Why shouldn't I go and talk about how the treatment is related to both of those variables?
+
+*KAM*: The familywise error rate is the probability of coming to at least one false conclusion in a series of hypothesis tests (the probability of making at least one Type I Error, a false positive). The importance of controlling for the FWER is that if you run enough tests, it is incredibly likely you will find at least one significant result (this might go beyond p-hacking; p-farming, perhaps?). Therefore, it is important we control for this if we want our results to be valid (and not laughed off the stage at a conference), and there are a few methods with which to do so (detailed more below). First, there is the "single-step" approach, which makes equal adjustments to each p-value and keeps the overall alpha level at a particular level (usually 0.05). This is the Bonferroni correction. To do it, you first divide the alpha level by the number of tests you’re running and apply that alpha level to each individual test (for example, if your overall alpha level is .05 and you are running 5 tests, then each test will have an alpha level of .05/5 = .01). Then, apply the new alpha level to each test for finding p-values. In this example, the p-value would have to be .01 or less for statistical significance, thereby avoiding a messy situation analogous to throwing spaghetti at a wall to see if it's cooked. Yet there are a great deal of statisticians who do not find this method to be particularly useful since it leads to a loss of power and (this this is important) a potential for higher Type II errors.
+
+Another method is the sequential method, where we make adaptive adjustments (not absolute) to each p-value. There are several such methods, which could be seen as variations or improvements on the Bonferroni approach such as the Holm-Bonferroni method, where tests are run and then ordered from lowest to highest p-values, the individual tests are then tested starting with the one with the lowest p-value with an overall Bonferroni correction for all tests.
+
+All in all, your analyst (whom we strongly suspect is some form of Joan of Arc reborn) has a point: it's not necessarily about which alpha-level you set, (if you set an alpha level at 0.001 and run a thousand tests, surely something will be harvestable on your p-farm?) but rather understanding the implications.
+
+The analyst said I need to "adjust" the p-values. And I found this function. Am I doing something wrong? Or right? Can you explain what is happening here and why it might matter? If I do this then I can't say anything is significant!
+
+```{r}
+p.adjust(theps, method="bonferroni")
+```
+
+*KAM*: There is a controversy surrounding ‘Pvalue’ in scientific inference because many believe that 0.05 cut-off is completely arbitrary and merely a convention. Especially p-value is troublesome for multiple testing. When conducting multiple analyses on the same dependent variable, or multiple testing, the false positive rate (type 1 error) gets inflated (aka. the familywise error). It thus increases the likelihood of coming about a significant result by pure chance. To tackle this problem, we adjust p-value. How? One way is to control type I error by minimizing the significant threshold (alpha). One conventional way for this is the Bonferroni correction (which you did above). Basic idea is that you get the Bonferroni adjusted p-value by dividing the original alpha (the threshold) by the number of analyses on the dependent variable. Using the p.adjust function and the ‘method’ argument set to "bonferroni", you get a vector of same length but with adjusted P values. This adjustment approach corrects according to the family-wise error rate of at least one false positive (Jafari and Ansari-Pour 2018).
+
+> And she showed me the following. What is happening here? What am I supposed to learn from the simulation and/or the results? How would I fix things?
+
+*KAM*: So we just discussed one way of p-value adjustment--the Bonferroni correction. Guess what! There's an even more powerful one--an adjustment method proposed by Benjamini and Hochberg! This method, rather than controlling the false positive rate as in the Bonferroni method, controls the false discovery rate (FDR). FDR is to answer the questions like, “If a result is statistically significant, what is the probability that the null hypothesis is really true?” and “Of all experiments that reach a statistically significant conclusion, what fraction are false positives (Type I errors)?” (GraphPad, 2014) So the FDR is the expected proportion of false positives among all positives (i.e. the expected value of [false positive / (false positive + true positive)]. It is distinct from the significance level which is the expected ratio of the number of false positive results divided by all results under the null hypothesis.
+
+There are three steps for this. First, you order the array of unadjusted p-values generated from the number of hypotheses tests in ascending fashion. Then you iterate over the array (i.e. create loop generating). Usually, the index of array starting at 1 divided by the number of elements in that array, or the number of tests that we are conducting times q* (the expected proportion of false discoveries that we would like to have--conventionally 0.05).  Then, you reject all hypotheses if p-value is less than adjusted-p value (souorce: Youtube lecture by Phil Anderson). This is similar to what you did underneath. You created new ex
+periments with block randomization. And using a simulation, you shuffled the treatment and generate more data to get more idea of distribution of possible outcomes, and at last, you find out that the mean false-positive rate is 0.27! So basically, you learn how easy you can have significant findings when you shouldn’t have! How to fix this problem? I think to get more power for your test, you need to collect more data! 
+
+```{r fwerassess}
+fwerfn <- function(simulations, trt, outcome, block, data) {
+  require(RItools)
+  outpaired <- outcome - ave(outcome, block)
+  output <- foreach(1:simulations,
+    .packages = "RItools",
+    .export = c("newexperiment"),
+    .combine = "cbind"
+  ) %dopar% {
+    ## First make a new experiment with no relationship between z and y
+    ## since we know that there is no effect, then we can assess the false positive rate of
+    ## lmrob
+    data$newz <- newexperiment(z = trt, b = block)
+    thexb <- xBalance(newz ~ rpre + medhhi1000 + medage + cands + blkpct, strata = list(pair = ~sF), data = data, report = "all")
+    theps <- thexb$results[, "p", ]
+    return(theps)
+  }
+  return(output)
+}
+set.seed(12345)
+fwer_res <- fwerfn(100, trt = news.df$z, outcome = news.df$r, block = news.df$sF, data = news.df)
+fwer_res[, 1:5]
+## Any significant at \alpha=.1?
+false_positive_rates <- apply(fwer_res, 2, function(x) {
+  any(x <= .1)
+})
+fwer <- mean(false_positive_rates)
+```

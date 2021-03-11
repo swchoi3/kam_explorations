@@ -1,0 +1,360 @@
+title: "Exploration 5: Estimation and Evaluating Estimators"
+author: 'Jake Bowers'
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+header-includes:
+  - \usepackage[T1]{fontenc}
+  - \usepackage{textcomp}
+  - \usepackage{fontspec}
+  - \newfontfamily\unicodefont[Ligatures=TeX]{TeX Gyre Heros}
+  - \newfontfamily\themainfont[Ligatures=TeX]{Crimson Text}
+  - \newfontfamily\grouptwofont[Ligatures=TeX]{Source Code Pro}
+  - \newfontfamily\groupthreefont[Ligatures=TeX]{Courier}
+output:
+  pdf_document:
+    number_sections: true
+    fig_caption: yes
+    fig_height: 8
+    fig_width: 8
+    latex_engine: xelatex
+    citation_package: biblatex
+    keep_tex: true
+fontsize: 10pt
+geometry: margin=1in
+graphics: yes
+mainfont: "Helvetica"
+bibliography: classbib.bib
+biblio-style: "authoryear-comp,natbib"
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+<!-- Make this document using library(rmarkdown); render("exploration5estimation.Rmd") -->
+
+\input{mytexsymbols}
+
+```{r setup, echo=FALSE, results=FALSE, include=FALSE, cache=FALSE}
+library(here)
+source(here("rmd_setup.R"))
+```
+
+```{r loadlibs, echo=FALSE, include=FALSE, results=FALSE}
+library(tidyverse)
+library(coin)
+library(DeclareDesign)
+```
+
+The mystery caller who sought help with matching and covariance
+adjustment is back and her voice seems bit more relaxed. "Now that you
+have shown that you can be trusted, I can be more honest with you. I
+want to understand something about the effect of terrorist attacks on
+the civil society of the places where they occur. I understand now that
+my life would be much easier if I could just randomly assign terrorist
+attacks to different places, but ~~when my secret team does this we will
+never tell~~ this would obviously be unethical. The thing is that I'm a
+bit unclear about this --- about why my life would be easier. Some
+people are saying things like
+`Your estimator of the average treatment effect would be unbiased.` and
+I don't really understand what this means. Moreover, I asked my
+~~prisoner~~ analyst to make up some data --- pretending that this was
+from an experiment but with known relationships --- so that we could
+figure out how to analyze this kind of data. But what she gave me was
+all of this confusing code. Can you help me make sense of it? This is
+important to me because I will want to be able to use a randomized
+experiment to ~~randomly bomb~~ learn about the effects of terrorism on
+civil society."
+
+"~~The prisoner provided the following code before she escaped.~~ The
+pensioner provided the following code before she retired to the Cape'.
+Can you look at the code and figure it out? I'm particularly concerned
+about mentions of bias. I'm especially worried that there is some
+trickery here in regards the claim that the `estATEbest` number is the
+best estimate of the underlying unobserved effect of the treatment. I
+asked her to **show** me that this was the case and she muttered about
+bias, mse, and consistency and I didn't understand what she meant or her
+code. How am I going to ~~destabilize enemy states~~ learn what an
+estimator is and how to judge one if I don't understand this stuff? Can you help me? (After all neither `estATE` or `estATEbest` is the same as `trueATE`!!"
+
+```{r tidy=FALSE, results='hide'}
+rm(list = ls()) ## clear workspace
+load(url("http://jakebowers.org/Data/ho05.rda")) ## the UK Home Office Survey 2005
+### Removing missing and weird values, also restricting attention to London and only 100 people there.
+tmpdat <- droplevels(ho05[!is.na(ho05$hlphrs), ]) ## &ho05$Rage!=0&ho05$GOR=="London",])
+tmpdat2 <- na.omit(tmpdat[, c(
+  "postbomb", "hlphrs", "Rsex", "ZQuals1", "Rdmstat",
+  "Rnssec17", "workstatus", "hhinc", "Rage"
+)])
+set.seed(20180124)
+N <- 50
+wrkdat <- droplevels(tmpdat2[sample(1:nrow(tmpdat2), size = N), ])
+## Do people report helping others who are not relatives: a measure of social
+## capital, of the health of civil society (hlphrs)
+## Is the survey after the bombing (postbomb==1) or before (postbomb==0)
+```
+
+*KAM*: First, hello to whichever NSA agent is overseeing this conversation (we’d like to remind the NSA and the intelligence community that we are all America-loving students who would never do it any harm).  Looking at the data, let's assume the survey is after the bombing since we're sampling responses. 
+
+Second, what is an ATE? The average treatment effect is "the average difference in the pair of potential outcomes averaged over the entire population of interest (at a particular moment in time), where ATE = E[Yi1 - Yi0]" (Bauer, 2020). A few caveats: the notation implies three assumptions. First, that there is no simultaneity (not the same thing as endogeneity); second, that there is no interference between units (i.e, Yi(T1, T2, .... Tn) = Yi(Ti)); and third, that it is the same version of treatment. If any of these assumptions are violated, we'd need to formulate differently. One important thing to remember is that we can’t estimate ATE without observing both potential outcomes (even with infinite sample size); in other words, we cannot devise an ATE if one outcome is not present (which defeats the point). 
+	
+	Third, having an unbiased estimator of the ATE is exactly what we’d like, since it means that the difference between the estimator's expected value and the true value of the parameter being estimated is zero, which is good. In other words, the degree of bias an estimator has could be thought of (oversimplified it may be) as the degree of either overshooting or undershooting the true values.  There are several ways to try to minimize bias, such as taking your sample according to sound statistical practices; avoiding measurement error by making sure data is collected with unbiased practices (for example, make sure any questions posed aren’t ambiguous); avoid unrepresentative samples by making sure you haven’t excluded certain population members (like minorities or people who work two jobs). (Statisticshowto)
+
+ > First, Sir, I am simulating data so that I **know** what it means to
+> repeat the design. Step one: Define the potential outcomes (recall
+> Gerber and Green Chapters 1 to 3 and Rosenbaum 2010,2017 on what
+> potential outcomes are, Sir) --- here, I want them to have a **known
+> relationship** with background covariates. Here, as you can see, the
+> potential outcome to control is mostly a function of covariates plus a
+> little noise.
+
+```{r}
+## Just make some fake data
+## potential outcome in the control condition as a function of runif() noise and covariates.
+wrkdat$y0 <- with(wrkdat, 3 - 3 * as.numeric(Rsex == "Female") +
+  4 * as.numeric(Rdmstat == "Single") +
+  8 * as.numeric(workstatus == "Not Employed") +
+  8 * as.numeric(workstatus == "Self-Employed") -
+  8 * hhinc + .4 * Rage) +
+  runif(n = N, min = min(wrkdat$hlphrs), max = max(wrkdat$hlphrs))
+## So, the covariates fairly strongly predict the outcome under control
+lm2 <- lm(y0 ~ Rsex + ZQuals1 + Rdmstat + Rnssec17 + workstatus + hhinc + Rage, data = wrkdat)
+summary(lm2)$r.squared
+```
+
+> Next, Z is the experiment, shuffle the `wrkdat$postbomb` variable to
+> create a pretend experiment. The shuffling breaks the relationship
+> between the treatment and any observed or unobserved variables so that
+> **I** can control the actual treatment effects. Again, this is
+> necessary for me to know what is going on.
+
+```{r}
+set.seed(20180124)
+# wrkdat$Z<-sample(wrkdat$postbomb) ## one way.
+wrkdat$Z <- sample(rep(c(0, 1), nrow(wrkdat) / 2))
+# wrkdat$Z <- randomizr::complete_ra(N=nrow(wrkdat)) ## even easier
+wrkdat$y1 <- with(wrkdat, mean(y0) + .5 * sd(y0) + (y0 - mean(y0))/2)
+sd(wrkdat$y0)
+sd(wrkdat$y1) ## "treatment" changes variance as well as location
+## Faster to not use ggplot for this simple case
+boxplot(wrkdat[c("y0","y1")])
+```
+
+> Now calculate the true ATE using the potential outcomes (didn't finish
+> this code. I bet you can do it.)
+
+```{r, eval=TRUE}
+trueATE <- mean(..}
+trueATE
+```
+
+```{r KAM_Answer_trueATE}
+# Answer: below we resolve your unfinished code with different codes but the same intention and result.
+trueATE <- mean(wrkdat$y1) - mean(wrkdat$y0)
+trueATE <- with(wrkdat, mean(y1-y0))
+trueATE
+```
+
+> And reveal the unit level outcomes we would observe given the
+> randomization
+
+```{r}
+wrkdat$Y <- with(wrkdat, Z * y1 + (1 - Z) * y0)
+```
+
+> Sir, here is what you'd do to estimate the treatment effect of your
+> ~~nefarious~~ experiment. The estimate is `estATE` although some might
+> say that this is biased. But I say that, in mean squared error terms,
+> that the estimator that produced `estATE` is better than the simple
+> one that does not use marital status and age. I'm ok with a little
+> bias if I can increase precision aka efficiency. (You can learn more
+> about this at [the new stats
+> textbook](https://egap.github.io/learningdays-book/estimands-and-estimators.html)
+> and especially in the pdf and Rmd for the slides.)
+
+```{r}
+estATE <- lm(Y~Z + Rsex + ZQuals1 + Rdmstat + Rnssec17 + workstatus + hhinc + Rage, data=wrkdat)
+coef(estATE)[["Z"]]
+```
+> Here is a demonstration that this estimator has small bias. You should be able to show on your own that the simple version of `estATE` with no covariates is actually unbiased --- but it just is a worse estimator in terms of mean squared error, although both estimators should be consistent.
+set.seed(20180113)
+newEstimate <- function(obsz, dat) {
+	newExperiment <- function(z) {
+		sample(z)
+	}
+	dat$newz <- newExperiment(obsz)
+	dat$newY <- with(dat, newz * y1 + (1 - newz) * y0)
+	theestATEbest <- coef(lm(newY ~ newz + Rsex + ZQuals1 +
+				 Rdmstat + Rnssec17 + workstatus +
+				 hhinc + Rage, data = dat))[["newz"]]
+	theestATEunbiased <- coef(lm(newY ~ newz, data = dat))[["newz"]]
+	## Another method of using covariates kind of following Rosenbaun
+	## 2002 on Covariance Adjustment.
+	dat$e1 <- residuals(lm(newY ~ Rsex + ZQuals1 + Rdmstat + Rnssec17 +
+			       workstatus + hhinc + Rage, data = dat))
+	theestATEbest2 <- coef(lm(e1 ~ newz, data = dat))[["newz"]]
+	theestATEbest3 <- coef(estimatr::lm_lin(newY~newz,covariates=~ Rsex+Rage+hhinc,
+						data=dat))[["newz"]]
+	return(c(
+		 bestATE = theestATEbest,
+		 unbiasedATE = theestATEunbiased,
+		 bestATE2 = theestATEbest2,
+		 bestATE3 = theestATEbest3
+		 ))
+}
+## test the function.
+## newEstimate(obsz=wrkdat$Z,dat=wrkdat)
+```
+
+```{r assess_estimator, cache=TRUE}
+## An unbiased estimator is one where E[estimator]=Truth. How do I use estdists to assess bias and MSE?
+set.seed(1234568)
+estdists <- replicate(10000, newEstimate(obsz = wrkdat$Z, dat = wrkdat))
+sampdistvars <- apply(estdists, 1, var)
+apply(estdists,1,mean)
+```
+
+Answer: 
+First of all, in `estdist` you are replicating ten thousand estimates that stem from four estimators (bestATE, unbiasedATE, bestATE2, bestATE3) that you draw with your newEstimate function. As your question about bias and MSE based on the `estdist` deals with the estimate and estimand. Bias is the mean of error which is computed through the mean of the difference between the estimate and the estimand or as follows:  bias = mean(estimate - estimand). Regarding the mean squared error or MSE, the smallest MSE of an estimator indicates the most unbiased estimator. So, we need to seek the MSE from the four estimators generated by `estdist`. And the way to compute the MSE is as follows: mse = sqrt(mean((estimate - estimand) ^ 2)).
+So, first we need to determine the one that refers to estimate and the other one that refers to estimand before looking for the bias and MSE. Thus, we seek the bias and the MSE as the following codes:
+
+```{r KAM_Answer_Bias/Estimate}
+## Determining the estimates (based on the four estimators) and the estimand (based on the trueATE)
+estimatesKAM <- apply(estdists,1,mean) # it is already the mean of the estimates
+estimandKAM <- with(wrkdat, mean(y1-y0)) # it is already the mean of the estimand
+## Bias
+biasKAM <- estimatesKAM - estimandKAM ## so we remove the mean from the bias equation.
+print(round(biasKAM, 3)) 
+
+# Note that the above `biasKAM` should be mean(estimate - estimand) but it will result in a single mean of all estimators. So, to see the four estimators’ biases we need to remove the ‘mean’ function'
+
+## MSE
+mseKAM <- sqrt((estimatesKAM - estimandKAM) ^ 2) # so we remove the mean from the MSE equation. 
+print(round(mseKAM, 3)) 
+
+# Note that the above `mseKAM` should be sqrt(mean((estimate - estimand) ^ 2)) but it will result in a single MSE value of all estimators. So, to see the four estimators’ MSEs we need to remove the ‘mean’ function. 
+
+```
+
+
+> Here compare two versions of the covariance adusted estimator with the
+> simple verion. The residuals method is kind of like Rosenbaum (2002)
+> on covariance adjustment.
+
+```{r plots eval=TRUE}
+plot(density(estdists["bestATE", ]), ylim = c(0, .25))
+rug(estdists["bestATE", ], col = "black", line = 0)
+lines(density(estdists["unbiasedATE", ]), col = "blue")
+rug(estdists["unbiasedATE", ], col = "blue", line = .5)
+lines(density(estdists["bestATE2", ]), col = "orange")
+lines(density(estdists["bestATE3", ]), col = "purple")
+abline(v = trueATE) ## error?? how to calculate trueATE?
+sampdistmeans <- apply(estdists, 1, mean)
+points(sampdistmeans, rep(0, 4),
+  pch = c(17, 17, 17, 17),
+  cex = 1, col = c("black", "blue", "orange", "purple")
+)
+```
+
+> Shouldn't these look better behaved? This is an experiment after all!
+> What is going on? Which estimator should I use? Why? 
+
+Answer: 
+Here you are comparing estimators that generate average treatment effects of your “bombing survey” by drawing the density distributions. In this regard, a good estimator should be 1) unbiased, i.e., it should avoid systematic error in guessing the estimand like the expected value of the estimator must be equal to the mean of the parameter; 2) consistent, i.e., the value of the estimator approaches the value of the parameter as more information presents such as when the sample size increases; and 3) efficient, i.e., the estimator has the smallest variance of all estimators which could be used. Based on these three indicators, we suggest that the `bestATE3` is the best estimator should you use since the `sampdistvars` shows that the `bestATE3` has the smallest variance. Yet, the `bestATE2` is not comparable as it computes a different response variable, i.e., the  `e1`, not the `newY`. In short, though the mean of its distribution and its estimate (13.697) value is similar to the ones of `bestATE` (13.396) and `unbiasedETA` (13.666), the `bestATE3` has the smallest variance relative to `bestATE` (35.57) and `unbiasedETA` (13.14). 
+
+Sources: 
+https://egap.github.io/theory_and_practice_of_field_experiments/
+https://people.richland.edu/james/lecture/m113/estimation
+
+
+>Maybe we should try this with tmpdat2 (N=872)? Or even try with N=100? Can you show
+> evidence that as N increases at least one of these four estimators is
+> consistent?
+
+Sure, but before showing you that, I want to remind you that a consistent estimator is an estimator having the property that as the number of data points used increases indefinitely, the resulting sequence of estimates converges in probability to the true value.
+
+That being said, let's check whether the four estimators are consistent! 
+
+
+```{r}
+##Repetitting what we've done with N =100
+set.seed(2021)
+N <- 100
+wrkdat100 <- droplevels(tmpdat2[sample(1:nrow(tmpdat2), size =N), ])
+
+wrkdat100$y0 <- with(wrkdat100, 3 - 3 * as.numeric(Rsex == "Female") +
+  4 * as.numeric(Rdmstat == "Single") +
+  8 * as.numeric(workstatus == "Not Employed") +
+  8 * as.numeric(workstatus == "Self-Employed") -
+  8 * hhinc + .4 * Rage) +
+  runif(n = N, min = min(wrkdat100$hlphrs), max = max(wrkdat100$hlphrs))
+
+wrkdat100$Z <- randomizr::complete_ra(N=nrow(wrkdat100)) 
+wrkdat100$y1 <- with(wrkdat100, mean(y0) + .5 * sd(y0) + (y0 - mean(y0))/2)
+
+trueATE_100 <- mean(wrkdat100$y1 - wrkdat100$y0)
+trueATE_100  #15.48692
+
+wrkdat100$Y <- with(wrkdat100, Z * y1 + (1 - Z) * y0)
+
+newEstimate(obsz=wrkdat100$Z,dat=wrkdat100)
+
+
+estdists_100 <- replicate(10000, newEstimate(obsz = wrkdat100$Z, dat = wrkdat100))
+
+
+plot(density(estdists_100["bestATE", ]), ylim = c(0, .25))
+rug(estdists_100["bestATE", ], col = "black", line = 0)
+lines(density(estdists_100["unbiasedATE", ]), col = "blue")
+rug(estdists_100["unbiasedATE", ], col = "blue", line = .5)
+lines(density(estdists_100["bestATE2", ]), col = "orange")
+lines(density(estdists_100["bestATE3", ]), col = "purple")
+abline(v = trueATE_100)
+
+sampdistmeans_100 <- apply(estdists_100, 1, mean)
+points(sampdistmeans_100, rep(0, 4),
+  pch = c(17, 17, 17, 17),
+  cex = 1, col = c("black", "blue", "orange", "purple"))
+)
+```
+Similarly, let's do when N = 872
+
+```{r}
+set.seed(20212021)
+N <- 872
+wrkdat_872 <- droplevels(tmpdat2[sample(1:nrow(tmpdat2), size = N,replace=TRUE),  ])
+wrkdat_872$y0 <- with(wrkdat_872, 3 - 3 * as.numeric(Rsex == "Female") +
+  4 * as.numeric(Rdmstat == "Single") +
+  8 * as.numeric(workstatus == "Not Employed") +
+  8 * as.numeric(workstatus == "Self-Employed") -
+  8 * hhinc + .4 * Rage) +
+  runif(n = N, min = min(wrkdat_872$hlphrs), max = max(wrkdat_872$hlphrs))
+wrkdat_872$Z <- randomizr::complete_ra(N=nrow(wrkdat_872)) 
+wrkdat_872$y1 <- with(wrkdat_872, mean(y0) + .5 * sd(y0) + (y0 - mean(y0))/2)
+
+trueATE_872 <- mean(wrkdat_872$y1 - wrkdat_872$y0)
+wrkdat_872$Y <- with(wrkdat_872, Z * y1 + (1 - Z) * y0)
+newEstimate(obsz=wrkdat_872$Z,dat=wrkdat_872)
+
+estdists_872 <- replicate(10000, newEstimate(obsz = wrkdat_872$Z, dat = wrkdat_872))
+
+plot(density(estdists_872["bestATE", ]), ylim = c(0, .25))
+rug(estdists_872["bestATE", ], col = "black", line = 0)
+lines(density(estdists_872["unbiasedATE", ]), col = "blue")
+rug(estdists_872["unbiasedATE", ], col = "blue", line = .5)
+lines(density(estdists_872["bestATE2", ]), col = "orange")
+lines(density(estdists_872["bestATE3", ]), col = "purple")
+abline(v = trueATE_872) 
+
+sampdistmeans_872 <- apply(estdists_872, 1, mean)
+points(sampdistmeans_872, rep(0, 4),
+  pch = c(17, 17, 17, 17),
+  cex = 1, col = c("black", "blue", "orange", "purple")
+)
+```
+
+Let's compare them all now. As N increases (N= 50, 100, 872), the distributions of estimates increasingly get closer to the true value.Hence, 
+
+```{r}
+Summary <- cbind.data.frame((sampdistmeans, sampdistmeans_100, sampdistmeans_872))
+```
+
+

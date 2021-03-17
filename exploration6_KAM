@@ -1,0 +1,413 @@
+title: 'Exploration 6: Confidence Intervals --- The Bootstrap Is to the Sample as the Sample is to Population'
+author: 'Jake Bowers'
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+header-includes:
+    - \usepackage[T1]{fontenc}
+    - \usepackage{textcomp}
+    - \usepackage{fontspec}
+    - \newfontfamily\unicodefont[Ligatures=TeX]{TeX Gyre Heros}
+    - \newfontfamily\themainfont[Ligatures=TeX]{Crimson Text}
+    - \newfontfamily\grouptwofont[Ligatures=TeX]{Source Code Pro}
+    - \newfontfamily\groupthreefont[Ligatures=TeX]{Courier}
+output:
+  pdf_document:
+    number_sections: true
+    fig_caption: yes
+    fig_height: 8
+    fig_width: 8
+    latex_engine: xelatex
+    citation_package: biblatex
+    keep_tex: true
+fontsize: 10pt
+geometry: margin=1in
+graphics: yes
+mainfont: "Helvetica"
+bibliography: classbib.bib
+biblio-style: "authoryear-comp,natbib"
+---
+
+<!-- Make this document using library(rmarkdown); render("exploration1.Rmd") -->
+\input{mytexsymbols}
+
+```{r setup, echo=FALSE, results=FALSE, include=FALSE, cache=FALSE}
+library(here)
+source(here("rmd_setup.R"))
+```
+
+```{r loadlibs}
+library(tidyverse)
+library(estimatr)
+```
+
+
+The word must be getting out about your abilities as a statistical consultant.
+Another friend calls. This person is studying the democratic transition in
+Chile and is having trouble understanding his data. About 6 months after the
+election of the first democratically elected president in Chile since the 1973
+military coup the Centro de Estudios Publicos did a national in-person survey
+of of about 1190 people. "Did people still worry about the return of a military
+government?", he asks, "Was there a big difference between people who grew up
+during the military regime and those who were socialized into politics before?
+So far I've gotten this far, but I'm having to pay attention to some other
+urgent business. Can you answer this question for me? Please don't say
+statistically significant by the way. I'm not sure what that would mean in this
+circumstance --- that is part of the reason I'm emailing you."
+
+```{r setupdata, cache=TRUE}
+load(url("http://jakebowers.org/Data/chile90.rda"))
+```
+Here is some information from the code book.\footnote{\url{http://jakebowers.org/PS531Data/CEP14.pdf}}.
+
+```
+p26 Cual es su edad por favor
+'1' 18-24
+'2' 25-34
+'3' 35-44
+'4' 45-54
+'5' 55-64
+'6' 65YMAS
+'7' NO CONTESTA
+p201. En esta hoja se presentan una serie de riesgos que el pais
+puede enfrentar en los proximos 4 años. Por favor, lea la
+lista, y digame ?Cuales son para Ud. los dos principales
+riesgos que puede enfrentar el pais? (PASAR TARJETA No 6)
+...
+6 Conflicto con las Fuerzas Armadas
+...
+```
+
+
+```{r recodechiledata, results='hide'}
+## Some recoding
+## milworry=1 if mentioned worry about conflicts with the military, 0 otherwise
+chile90$milworry <- (chile90$P202 == 6) + (chile90$P201 == 6)
+## I try to check my recodes against the original variables
+## table(chile90$milworry,chile90$P202==6,chile90$P201==6,useNA="ifany")
+library(car) ## contains the recode() command
+## Collapse the age variable into just three categories
+## there must be a tidyverse way to do this
+chile90$age3 <- car::recode(chile90$P26, "1:2='18-34';3:4='35-54';5:6='55ymas'", as.factor = TRUE)
+## Check the recode
+## table(chile90$P26,chile90$age3,useNA="ifany")
+```
+"Thanks!", he says after seeing your quick little analysis of the relationship
+between `milworry` as an outcome and `age3` as an explanatory variable, "But
+people are now asking about how much I would expect this relationship to vary
+if I were to draw another sample from the same population. First I'm not sure
+why they are asking that question? I'm used to people saying "statistically
+significant" but I now kind of realize that I don't know what it would really
+mean here to say this. Could the discussion about the relationship between a
+sample and population have something to do with that?  Since I  can't draw a
+new sample from the population in 1990 in Chile, but I want to respond to
+this desire to infer about what I don't observe from what I do observe,  I
+looked around and found out about something called the *bootstrap*. I have to
+say that I  am skeptical about it. How could drawing samples  from  my sample
+teach me about how my own sample would behave  if  I were  able  to  re-sample
+from the actual population? When I  told a  friend about my concerns, she sent
+the following code --- saying that  this should prove to me that the bootstrap
+idea works.  Yet, I'm still confused. Can you explain how the following  is a
+demonstration of that the bootstrap procedure working as it should?"
+
+
+KAM:
+
+People are asking whether you will get the similar inference if you had a different sample from the sample population. They ask this because you don’t know how the sample is representative of the population. Depending on how the samples are drawn, the samples can give you different (varying) ideas. Sometimes, samples can be very extreme (e.g., only people holding extreme-views participate in the survey). Hence, estimation drawn from that extreme sample can mislead you (gives you misleading confidence intervals etc.).
+
+Therefore, it would be better if you can survey larger samples of Chilean people, and of course by keeping a random sampling method. However, as you mentioned, it is unrealistic. Yet, you can mimic that idea using bootstrapping. Bootstrapping is drawing re-samples from samples numerous times with replacement. The bootstrap method is used for making statistical inferences about population estimates, and we usually use it to compute a confidence interval.  The estimation is based on the assumption that samples represent population, and each re-sampled ones are like a sample of the data. By doing so, you can get estimates from multiple resamples and learn the distribution of estimations from many resamples. What the overall samples speak to you is much more reliable than drawing an inference from one sample.
+
+
+
+```{r setupsample}
+## The bootstrap is supposed to help approximate a sampling distribution by creating a reesampling  distribution.
+## First, to convince you this  works, let's **pretend** that chile90 is the actual population
+## and that our observed sample only has 100 observations.
+set.seed(20161005) ## This makes the resampling/shuffling/random-number generation the same from run to run.
+chile90s <- sample_n(chile90[, c("age3", "milworry")], size = 100, replace = FALSE)
+## This table provides another summary of the relationship between worry about the military and age
+## table(chile90s$age3,chile90s$milworry,useNA="ifany")
+```
+
+```{r knownpop, cache=TRUE}
+lm_small <- lm(milworry ~ age3, data = chile90s)
+summary(lm_small)$coef
+## Then I drew a lot of samples from the population and recalculated the relationship each time
+## there must be a nicer way to do this. Feel free to show me better code to use in the future as 
+## long as the code doesn't say the word `boot`.
+nsamps <- 10000
+sampfits <- data.frame(t(replicate(nsamps, coef(lm(milworry ~ age3,
+  data = sample_n(chile90[, c("age3", "milworry")], size = 100, replace = FALSE)
+)))))
+```
+#KAM:  Now, you can see 10,000 coefficients for age335.54, age355ymas and intercepts. 
+
+"Then, I calculated the two values that bound 95% of sample coefficients for
+one of the coefficients:"
+
+```{r coverageinterval, results='hide'}
+quantile(sampfits[, "age355ymas"], c(.025, .975))
+```
+#KAM:  And this shows the range of coefficients for age355ymas with 95% confidence interval.
+
+"Maybe you can help me understand what the difference is here between a
+coverage interval and a confidence interval. I thought I needed a confidence
+interval and I had heard that you could use resampling to get
+a 'bootstrap confidence interval' even if you didn't know exactly that the
+sampling distribution of the coefficients was Normal, etc.."^[I'm further
+confused because people talk about `randomization inference` and it appears to
+mostly have to do with permutations even though I thought that bootstraps have to do with random samples.]
+
+Usually, we set the confidence interval (CI) as 95% (1-alpha =0.95). Such is true only when the population is normally distributed or the sample sizes are large enough to invoke the Central Limit Theorem (CLT). When the conditions are not met (small samples or not normal distribution) or when you don’t know the distribution, you can use simulation to estimate the coverage probability or to get coverage interval. 
+
+Samples can be very extreme so that the confidence interval doesn’t include the population mean. So you get a confidence interval for each re-sampled group and check how much of those sample pools “cover” the population mean. That’s coverage probability. It follows three steps: 1) simulating many samples of size n from the population, 2) computing the confidence interval for each sample, and 3) computing the proportion of samples for which the population parameter is contained in the confidence interval. That proportion is an estimate for the empirical coverage probability of the CI. If 94 samples out of 100 samples cover the population mean, then the coverage probability is 94%. Coverage interval is another way to express the same thing, but it gives you the coverage interval (range that includes that fraction of the ‘typical’ cases) (Kaplan 2009, 57). So in other words, coverage interval is a way to describe typical variation by specifying a fraction of the cases that are regarded as typical and then give the coverage interval. 
+
+The concept of bootstrap is similar to permutation. You repeat resampling from the sample with replacement (i.e. already re-sampled observations can be redrawn for other samples). Usually, you replicate sampling the number of sample sizes.
+
+
+"My friend said that she could create a resampling-based confidence
+interval for the $n=100$ sample. Can you do that for me? How does this
+confidence interval pretend like I only had one sample of size 100, relate
+to the coverage interval that I calculated before?"
+
+KAM
+
+```{r}
+nsamps2 <- 100
+sampfits2 <- data.frame(t(replicate(nsamps2, coef(lm(milworry ~ age3,
+  data = sample_n(chile90[, c("age3", "milworry")], size = 100, replace = FALSE)
+)))))
+
+quantile(sampfits2[, "age355ymas"], c(.025, .975))
+```
+
+With 10,000 samples, the 95% CI was (-0.3241800, 0.1288327). The range is about 0.453 (0.1288+0.3242). Now with smaller N (N=100),the 95% CI is (-0.298375, 0.180573 )which has the range of 0.479 (0.18+0.298). The confidence interval is narrower as there are more samples. In other words, the estimation is more accurate for more samples.
+
+"Once you've done that, would you please give me a good guess about how my
+original relationship, using the full CEP sample of roughly 1190 people, might
+vary if I were to repeat the random sampling process that created that N=1190 sample
+in the first place? I've heard that you can do this by resampling with
+replacement, but I don't understand why with replacement or exactly how to
+Resample."
+
+# KAM Answer: 
+First of all, you CEP data set `chile90` actually consists of 1187 (we prefer the exact number, not your rounding one). So, in the code below we label the resampled data set as 'resample_KAM`. But before we show you the code, let's mitigate your confusion about resampling with replacement. A resampling with replacement basically refers to the meaning of bootstrapping, a term you have mentioned earlier. That means that all values in your CEP sample have an equal probability of being selected, including multiple times, so a value could have a duplicate. And, that is the one applied to better estimate confidence intervals of test statistics, which is discussed later.
+Source: https://uoftcoders.github.io/studyGroup/lessons/r/resampling/lesson/
+
+```{r KAM_Answer_Resampling-Replacement}
+
+chile90_KAM = chile90
+resample_KAM <- sample(chile90_KAM, size = 1190 , replace = TRUE)
+resample_KAM$age3_KAM <- car::recode(resample_KAM$P26, "1:2='18-34';3:4='35-54';5:6='55ymas'", as.factor = TRUE)
+
+resample_KAM1<-sample(chile90[, c("age3", "milworry")], size = 1190, replace = TRUE)
+
+lm_chile90_ori <- lm(milworry ~ age3, data = chile90)$coef
+lm_chile90_100 <- lm(milworry ~ age3, data = chile90s)$coef
+lm_chile90_resamplingAll <- lm(milworry ~ age3_KAM, data = resample_KAM)$coef
+lm_chile90_resamplingVar <- lm(milworry ~ age3, data = resample_KAM1)$coef
+
+paste(lm_chile90_100, lm_chile90_ori, lm_chile90_resamplingAll, lm_chile90_resamplingVar)
+```
+
+The four `lm`s above show how the N=100, Original Data, and the Resampling of the Original data vary. If we did a resampling with replacement for all variables like in the lm_chile90_resamplingAll, we will have exactly the same relationship with the original data. But if we run for only two variables like in the lm_chile90_resamplingVar, then we have slightly different results: the coefficient of young age is slightly bigger (-0.02159) while the one of the older is smaller (-0.12724) than the ones from the original data, -0.02404 for age 35-54 and -0.10710 for age 55-older. This means that the resampling with replacement situates young people to be more worry with the military coup, and vice versa for the older citizens. 
+
+"Also, people are telling me I  should use a logit model here. Or even a probit
+model. But other people are saying that they are not necessary. Can I just use
+the bootstrap confidence interval using a linear model? Or do I need  to  use a
+logit or probit  model? On what basis should I make this decision? What kind of
+simulation would you do to make this decision? Just the steps of the simulation
+would be great --- just a sketch would help."
+
+## KAM Answer: 
+Prior to deciding which models we should run, at first we need to understand what does it mean by logit, probit, and the bootstrap confidence interval using a linear model. Probit and logit model are nonlinear techniques applied for binary or dichotomous response variable. The difference between the two is that while logit employ logistic distribution, probit apply standard normal distribution to define their cumulative distribution functions. In  a dichotomous variable that contains only 0 and 1, say Yes or No about worrying with military coup, drawing a linear model might be misleading as it will generate probability outside the range of 0 and 1. So, since you have dichotomous `milworry` as your dependent variable, it does make sense that people suggest you to use a logit model. But, those two models require complicated interpretation and procedures (though computing them in R is just a blink) as they transform the dichotomous values/levels (i.e., 0 and 1) through logarithm so that the dichotomous variable turns to be infinite. At the end, such procedures enable you to generate probability between 0 (not worry) and 1 (worry) of your response variable. 
+
+Meanwhile, the bootstrap confidence interval using a linear model draws the relationship between your two variables based on the interval over multiplication of your sample. That means that, say, if you aim to have 95% confidence interval, you may use a percentile interval where the 2.5th value and 97.5th of your ranked multiplied estimates play a role as the boundaries of your 95% confidence interval which capture the central 95% of the distribution. You can generate the ranked multiplied coefficients as many as you want, say 100, 1000 or 10000, as bootstrapping here means the number of your linear model coefficients resamples. To be sure, here the interval basically tells the range of probability between 0 (not worry) and 1 (worry) of your response dichotomous variable `milworry`. But the advantage at this stage is that the linear model by bootstrap confidence interval is easier for interpretation since we also can generate corrected bias of our estimates (we will show in the codes below)
+
+In short, based on those two strategies, we think that you can try the bootstrap confidence interval in order to ease your interpretation of the result (not to say that running logit/probit in your case is wrong--but might be better, instead). Based on various sources (cited below), we can show you the code below how to do bootstrapping in another way by hand (manually) other than your `sampfits`. We also extend our exploration from confidence interval to bias correction of your ages' coefficients and show you the distributions of our bootstrapping version on the three coefficients of your explanatory variable `age3`. Then we compare the results with the logit model. 
+
+Source: 
+Fox, John. "Bootstrapping regression models appendix to an R and S-PLUS companion to applied regression." (2002).
+https://ocw.mit.edu/courses/mathematics/18-05-introduction-to-probability-and-statistics-spring-2014/readings/MIT18_05S14_Reading24.pdf
+https://acclab.github.io/bootstrap-confidence-intervals.html
+https://stats.stackexchange.com/questions/316483/manually-bootstrapping-linear-regression-in-r
+
+```{r KAM_Answer_Bootstrap}
+library(ggplot2, quietly = TRUE)
+
+##### The Original model (relationship)
+fit_lmoriKAM = lm(milworry ~ age3, data = chile90)
+data.frame(coefficients = coefficients(fit_lmoriKAM), CI = confint(fit_lmoriKAM), check.names = FALSE)
+
+## save original coefficients
+beta_int = coefficients(fit_lmoriKAM)[1]
+beta_age35 = coefficients(fit_lmoriKAM)[2]
+beta_age55 = coefficients(fit_lmoriKAM)[3]
+
+##### Let's explore!!
+
+## Defining Bootstrap's properties
+n = dim(chile90)[1] ## number of obs in data
+B = 10000 ## number of bootstrap samples
+
+results_KAM = matrix(data = NA, nrow = B, ncol = 3, 
+                 dimnames = list(NULL, c("Intercept", "age35", "age55")))
+
+## Doing bootstrap with for-loop
+for(b in 1:B){
+  i = sample(x = 1:n, size = n, replace = TRUE) ## sample indices
+  temp = chile90[i,] ## temp data set
+  temp_model =  lm(milworry ~ age3, data = temp) ## train model
+  coeff = matrix(data = coefficients(temp_model), ncol = 3) ## get coefficients
+  results_KAM[b,] = coeff ## save coefficients in matrix
+}
+
+results_KAM <- data.frame(results_KAM, check.names = FALSE)
+
+summary(results_KAM) ## take a look at the samples
+
+boot_int = results_KAM[,"Intercept"]
+boot_age35 = results_KAM[,"age35"]
+boot_age55 = results_KAM[,"age55"]
+
+# Finding the 0.025 and 0.975 quantile (95% CI)
+ci_bootint = quantile(boot_int, c(0.025, 0.975))
+ci_bootage35 = quantile(boot_age35, c(0.025, 0.975))
+ci_bootage55 = quantile(boot_age55, c(0.025, 0.975))
+
+# the distribution of the bootstrapped coefficients (normally distributed)
+par(mfrow = c(2,2))
+hist(boot_int, main = "Bootstrapped Coefficients for Intercept",
+     xlab = "Coefficients for Intercept", probability = TRUE)
+abline(v = coefficients(fit_lmoriKAM)[1], col = "black", lty=2)
+
+hist(boot_age35, main = "Bootstrapped Coefficients for Age 35-54",
+     xlab = "Coefficients for Weight", probability = TRUE)
+abline(v = coefficients(fit_lmoriKAM)[2], col = "blue", lty=2)
+
+hist(boot_age55, main = "Bootstrapped Coefficients for Age 55-",
+     xlab = "Coefficients for Automatic Transmission", probability = TRUE)
+abline(v = coefficients(fit_lmoriKAM)[3], col = "green", lty=2)
+
+#Estimate bias for each parameter estimate.
+bias_int = mean(boot_int - beta_int)
+print(bias_int)
+bias_age35 = mean(boot_age35 - beta_age35)
+print(bias_age35)
+bias_age55 = mean(boot_age55 - beta_age55)
+print(bias_age55)
+
+# bias corrected coefficients
+crt_intercept = beta_int - bias_int
+print(crt_intercept)
+crt_age35 = beta_age35 - bias_age35
+print(crt_age35)
+crt_age55 = beta_age55 - bias_age55
+print(crt_age55)
+
+#### The Logit model 
+logitchile90 <- glm(milworry ~ age3, family = "binomial", data = chile90)
+summary(logitchile90)
+## This results in very different relationship/coefficients with negative intercepts and highly negative coefficients of your explanatory variable of age, again, which is difficult for interpretation. 
+```
+
+"Finally, can you please do a hypothesis test using your bootstrap procedure?
+I've heard that you can ask What proportion of bootstrapped coefficients for
+`age355ymas` are greater than or equal to 0?  What proportion of bootstrapped
+coefficients for `age355ymas` are greater than or equal to 0?  I tried to
+understand Fox $\S$ 21.4 and
+<http://www.stat.umn.edu/geyer/old/5601/examp/tests.html> but am having
+trouble." 
+
+```{r}
+bootstrap.prop <- sampfits %>%
+  filter(sampfits$age355ymas >=0) %>%
+  nrow() / nrow(sampfits)
+
+bootstrap.prop
+```
+
+*KAM*: Based on the results, we can see that the proportion of bootstrapped coefficients for 'age355ymas' which are greater than or equal to 0 are about 18%. Interestingly, it is very difficult (or at least hard to achieve normally) to test a hypothesis since the null hypothesis may or may not be satisfied due to uncertainty about the difference between "F-hat" and true population distribution. In other words, since we tend to test our hypothesis by pitting it against the null, if the distributions via sampling and bootstrapping do not satisfy the null it is hard to test adequately. As Geyer writes, "The most important bit of theory about nonparametric bootstrap hypothesis tests is that, in general, there ain't any!" Geyer does state that if we have a confidence interval, we do have a hypothesis test (for at least one single parameter we are aware of). But, as your question shows, you already knew that! 
+
+The test will be based on the approximate distribution of the test statistic t(z) = (z −𝜇0) / (𝜎-bar / sqrt(n)). You sample B times from set Z with replacement. The estimated ASL (achieved significance level) is given by hat(ASLboot) = #{t(z*^b)>= t(z)}/B. By using this test, large values of t(z*^b) can be evidence against the null hypothesis (neat!).
+
+
+"Finally, I do know that if I can invert a hypothesis test to get a confidence
+interval. Can you explain what is going on here and fix the code so that I can
+find the end points of a 95% confidence interval using only hypothesis tests?"
+
+For example, here is me inverting a CLT+IID based hypothesis test to create a
+confidence interval: here using a simulated continuous outcome (to make things
+easier than a binary outcome).
+
+"Can you sketch for me what I would do if someone were to ask me what
+the 'coverage' of my confidence interval is? You can just give me the steps and
+I'll try to find someone to write the code for me. For example, you can write
+it in pseudocode."
+
+```{r}
+## First make a continuous outcome so that the process of inverting the hypothesis test is a bit simpler
+set.seed(12345)
+chile90s$milworry_c <- with(chile90s,milworry + rnorm(nrow(chile90s),mean=0,sd=.5))
+chile90s$milworry_c[chile90s$milworry_c<0] <- 0
+lm_cont <- lm(milworry_c~age3,data=chile90s,subset=age3!="35-54")
+ci1 <- confint(lm_cont,parm="age355ymas",level=.95) ## we want to create this using only tests
+## If there were an average difference of "h0" between people 18-34 and people 55 and over
+## then when we took away this difference (Y - h0*(Indicator of Older People)),
+## we should not reject the null (that is, there should be no difference between older and younger people in terms of (Y - h0*(Indicator of Older People)).
+library(coin)
+ot1 <- pvalue(oneway_test(I(milworry_c - .47*(age3=="55ymas"))~age3,data=chile90s,subset=chile90s$age3!="35-54"))
+ot2 <- pvalue(oneway_test(I(milworry_c - .45*(age3=="55ymas"))~age3,data=chile90s,subset=chile90s$age3!="35-54"))
+myfn <- function(h0,alpha=.05){
+	thep <- pvalue(oneway_test(I(milworry_c - h0*(age3=="55ymas"))~age3,data=chile90s,subset=chile90s$age3!="35-54"))
+	return(alpha - thep)
+}
+upperlim<-uniroot(myfn,interval=c(0,20),extendInt="no",trace=2)
+lowerlim<- uniroot(myfn, interval=c(-20,0), extendInt = "no", trace= 2) ##the original code was missing the "lowerlim" object
+ci2 <- c(lowerlim$root,upperlim$root)
+## OR
+myfn2 <- function(x,alpha=.05){
+	thep <- pvalue(oneway_test(I(milworry_c - x*(age3=="55ymas"))~age3,data=chile90s,subset=chile90s$age3!="35-54"))
+	return(abs(alpha - thep))
+}
+optlower<-optim(par=c(0),fn=myfn2, control=list(trace=2), method="Brent", lower=-10,upper=0)
+optupper<-optim(par=c(0),fn=myfn2, control=list(trace=2), method="Brent", lower=0,upper=10) ##same thing as above
+ci3 <- c(optlower$par,optupper$par)
+
+ci1
+ci2
+ci3
+```
+
+*KAM*: We've patched up a couple of holes in your coding (lowerlim & optupper). It's also good to see that you've followed contemporary thought by using a one-tailed test, as opposed to a two-tailed (which probably would not have worked as intended). 
+
+What even is Brent's Method? Brent's Method is "a Root-finding Algorithm which combines root bracketing, bisection, and Inverse Quadratic Interpolation. It is sometimes known as the van Wijngaarden-Deker-Brent Method (try saying that 3 times fast; Brent, R. P. Ch. 3-4 in Algorithms for Minimization Without Derivatives. Englewood Cliffs, NJ: Prentice-Hall, 1973.) Brent claims that this method will always converge as long as the values of the function are computable within a given region containing a Root." (Brent's Method, ttps://archive.lib.msu.edu/crcmath/math/math/b/b384.html) 
+
+Ok, but what the hay is a root? Well, "roots" are the "roots of an equation f(x)=0 where the values of $x$ for which the equation is satisfied. The Fundamental Theorem of Algebra states that every Polynomial equation of degree $n$ has exactly $n$ roots, where some roots may have a multiplicity greater than 1 (in which case they are said to be degenerate)." (Root, https://archive.lib.msu.edu/crcmath/math/math/r/r372.html)  In short, recall from the previous answer that finding confidence intervals can work as a type of hypothesis test (in a way, bootstrap hypothesis testing is like the Wild West of statistical theory, maybe?). 
+
+
+So, what should you do? I've answered this above, but I'll reprint it here. 
+
+The test will be based on the approximate distribution of the test statistic t(z) = (z −𝜇0) / (𝜎-bar / sqrt(n)). You sample B times from set Z with replacement. The estimated ASL (achieved significance level) is given by hat(ASLboot) = #{t(z*^b)>= t(z)}/B. By using this test, large values of t(z*^b) can be evidence against the null hypothesis (neat!).
+
+We can conduct bootstrap hypothesis tests using the following:
+a) A test statistic t(x)
+b) An approximate null distribution F0 for the data under H0
+
+Given these, we generate 𝐵 bootstrap values of t(x∗) under F0 and estimate the achieved significance level by ASLboot = #{t(x*^b) >= t(x)} / B. (B being the samples of size with replacement from x).
+
+The choice of test statistic t(x) and the estimate of the null distribution will determine the power of the test. For example, if the actual population density is bimodal, but the Gaussian kernel density does not approximate it accurately, then the suggested test will not have high power. In cases where there is parametric alternative hypothesis, likelihood or Bayesian methods might be better for the sake of power and/or accuracy (this is pretty important: always ascertain which test is best suited to your needs). 
+
+
+Useful reading:
+
+ - \textcite[Chap 14]{kaplan2012ism} (also on coverage intervals)
+ - \textcite[Chap 7]{gonick1993cgs}
+ - \textcite[Chap 21.4]{fox2008applied} explains about bootstrap hypothesis tests
+   (i.e. sampling model justified hypothesis tests).
+ - \textcite{acdavison1997a}
+ - \textcite{davisonhinkley87}
+ - \textcite{phillipigood2004a}
+
+
+
+## References
+

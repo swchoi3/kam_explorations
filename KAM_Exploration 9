@@ -1,0 +1,392 @@
+---
+title: 'Exploration 9: Maximum Likelihood --- A General Method for Creating Estimators'
+author: 'Jake Bowers'
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+header-includes:
+  - \usepackage{bm}
+output:
+  pdf_document:
+    number_sections: true
+    fig_caption: yes
+    fig_height: 8
+    fig_width: 8
+    latex_engine: xelatex
+    citation_package: biblatex
+    keep_tex: true
+fontsize: 10pt
+geometry: margin=1in
+graphics: yes
+bibliography: classbib.bib
+biblio-style: "authoryear-comp,natbib"
+---
+
+<!-- Make this document using library(rmarkdown); render("exploration1.Rmd") -->
+\input{mytexsymbols}
+
+```{r setup, echo=FALSE, results=FALSE, include=FALSE, cache=FALSE}
+library(here)
+source(here("rmd_setup.R"))
+library(VGAM)
+```
+
+Our diplomat friend calls again. This time she feels particularly out of her
+depth: "My superiors want a confidence interval for the rate at which Italian
+Cabinets fail. They noted that  @cioffirevilla1984pri uses these data for the
+1946--1980 period to show that Italian governments end at a constant rate of
+.021 per week (i.e the mean length of an Italian cabinet from 1946 to 1980 was
+$1/.021 \approx 48$ weeks). But, now we have data until 1987 (there must be
+data since then too, but I can't find it when I search online):"
+
+
+\begin{center}
+  \setlength{\tabcolsep}{2pt}
+\begin{tabular}{@{}lccccccccccccccccccccc@{}}
+\hline
+Weeks & 2 & 8 & 12 & 16 & 20 & 24 & 28 & 32 & 40 & 44 & 48 & 52 & 56 & 60 & 64 & 72 &  76 & 88 & 92 & 108 & 180 \\
+Number of Cabinets & 4 & 1 & 4 & 1 & 4 & 2 & 6 & 2 & 1 & 1 & 2 & 2 & 2 & 1 & 1 & 2 & 1 & 1 & 1 & 1 & 1 \\
+\hline
+\end{tabular}
+ \end{center}
+
+
+"Here I convert that table to a data.frame:"
+
+```{r makedata}
+Weeks <- c(2, 8, 12, 16, 20, 24, 28, 32, 40, 44, 48, 52, 56, 60, 64, 72, 76, 88, 92, 108, 180)
+Num.cabinets <- c(4, 1, 4, 1, 4, 2, 6, 2, 1, 1, 2, 2, 2, 1, 1, 2, 1, 1, 1, 1, 1)
+cr.df <- data.frame(duration = rep(Weeks, Num.cabinets))
+```
+
+And I can even calculate the mean number of weeks between cabinets and convert
+it to a failure rate, following Cioffi-Revilla. But, I am flummoxed by the
+request for a confidence interval. These are the cabinets in Italy. And this is
+a univariate problem. What would statistical inference mean here? What am I
+inferring to (in an experiment I'm inferring to a counterfactual causal effect,
+in a sample survey I'm inferring to a population, what is unobserved here)? I
+noticed that in his paper, Cioffi-Revilla reports confidence intervals and
+$p$-values but does not re-sample, re-assign, let alone appeal to a Central Limit
+Theorem as an approximation to some re-sampling or re-assigning process
+although he does rely on the Central Limit Theorem for statistical inference.
+What does he do?  What doesn't he observe that he would like to target with
+statistical inference? What is he inferring to?"
+
+Later she called again, "I have figured out that he says something about a
+'data generating process' for a single duration between cabinets that, he
+claims, follows the following formula: $pr(Y)=\theta e^{-\theta Y}, \; 0 \le
+Y$. What is a data generating process? What does this formula mean in the
+context of the durations between cabinets in Italy in this period? Does the
+set of durations look at all like they could have arisen from an exponential
+distribution with rate $\theta$? Would the \texttt{rexp} function in R be
+helpful in assessing the general claim about a process producing durations
+between cabinets?"
+
+"Now, I know that Cioffi-Revilla reports an estimate. So he must have an
+estimator. And I assume that he has some idea about a repeated action. But I am
+confused. Here are some fragments of notes that I took, can you make sense of
+them?"
+
+
+"The likelihood function is this:
+
+$$\text{Likelihood of }\theta=L(\theta)= p(Y_1,Y_2,\ldots,Y_n|\theta)\text{ and if $Y_i$ iid $L(\theta)$}= p(Y_1|\theta)p(Y_2|\theta)\ldots p(Y_n|\theta)=\prod_{i=1}^n p(Y_i|\theta)$$
+
+But, I don't know what a likelihood function is, or why we would care. It looks
+like something to do with a joint probability. And, if we are talking about a
+joint probability, I'm confused about what kind of assumptions were required to
+go from the big joint probability function to a simple product of probability
+density functions or data generating processes. What is going on? What are the
+assumptions? Why might we believe them (or not) in this case?"
+
+"The likelihood that any parameter (or set of parameters) should have any
+assigned value (or set of values) is proportional to the probability that if
+this were so, the totality of observations should be that observed."
+@fisher1922mathematical, page 310 (Fisher invented likelihood as well as the
+idea of randomization-based inference)
+
+The **maximum likelihood estimate** provides the value of $\theta$ for
+which the data provide the most support given the dgp --- that is makes the
+observed data 'most probable' or 'most likely'.
+
+For our data:
+
+$$L(\theta)=\prod \theta e^{-\theta X}$$
+
+
+```{r deflike}
+## The likelihood function
+L.exp.fn <- function(theta, y = cr.df$duration) {
+  prod(theta * exp(-theta * y))
+}
+## we could also have used Rs exp pdf fn: prod(dexp(y,rate=theta))
+```
+
+I plugged in lots of values for $\theta$ in the R function above and graphed
+the result. What should I learn from this graph of the likelihood function?
+
+But, in my reading I see people using the log of the likelihood function, so I
+did the following:
+
+
+\begin{align*}
+\logl(\theta)&=\ln \left( \sum \theta e^{-\theta Y_i} \right) \\
+&=\sum \ln(\theta e^{-\theta Y_i}) \\
+&=\ln(\theta  e^{-\theta Y_1}+\ldots+\theta  e^{-\theta Y_n}) \\
+&=\ln(\theta  e^{-\theta Y_1})+\ldots+\ln(\theta  e^{-\theta Y_n})\\
+&=\ln(\theta)+\ln(e^{-\theta Y_1})+\ldots+\ln(\theta)+\ln(e^{-\theta Y_n})\\
+&=n\cdot \ln(\theta)+(-\theta Y_1 +\ldots+ (-\theta Y_n))\\
+&=n \ln(\theta) -\theta \sum Y_i
+\end{align*}
+
+If I make another R function for the log of the likelihood function, what
+would it look like as I varied $\theta$? Why would I use the log of the
+likelihood function versus the likelihood function itself directly? (Although
+the math of the logged version certainly looks simpler). It almost looks as if
+it would be \emph{sufficient} to have $n$ and the total durations to calculate
+values of the log-likelihood function and that we wouldn't need the raw data
+at all. Is this right? Is this what people mean by "sufficient statistic"? How
+is this useful?
+
+Now, most people don't seem to graph curves or surfaces of their likelihood
+functions (logged or otherwise). But I know that there is something special
+about the maximum of the log likelihood function (or perhaps the minimum of the
+negative log likelihood function). What is it? How would I find the maximum of
+the log likelihood function (i.e. is there a general formula for $\theta$ where
+the log likelihood function here takes on its maximum value?)?^[She confesses
+that she doesn't remember too much calculus so she used Wolfram Alpha online to
+do: `Solve[D[ n * Log[t] - t * y, t]==0,t]`. Or use Sage
+<http://www.sagemath.org/> or <https://cloud.sagemath.com>  to do something similar. ]
+
+So, we can find the maximum by just graphing the curve, or by using calculus.
+Another way is to find the maximum numerically doing something like:
+
+```{r eval=FALSE}
+## The log likelihood function. Something is causing an error here. How to fix it?
+Log.L.exp.fn <- function(theta, y = cr.df$duration) { ## Theta can be a vector
+  n <- length(y)
+  sumy <- sum(y)
+  if (any(theta <= 0)) {
+    ## This makes values for theta less than or equal to zero really not near the maximum
+    return(-99999)
+  } else {
+    ## return(n*log(theta)-theta*sumy)
+    ## return(sum(dexp(cr.df$duration,rate=theta,log=TRUE)))
+    ## return(sum(log(dexp(y, rate = theta, log = FALSE))))
+  }
+}
+## What is this doing?
+themle.max <- optim(par = c(theta = 0), Log.L.exp.fn, control = list(fnscale = -1, trace = 2), method = "BFGS", hessian = TRUE)
+```
+
+```{r}
+log.L.exp.fn <- function(theta, y = cr.df$duration) {
+  log(prod(theta * exp(-theta * y)))
+}
+```
+
+Do all the methods agree?
+
+It is cool, of course, that we have generated an estimator (i.e. we came up
+with a formula to make a good guess (?how good? ?how would we know?) about
+something unobserved that we care about) using only statements about the kind
+of probability machine that we think could produce the outcome. But, what about
+statistical inference? We need a sampling distribution. Where would this come
+from? Someone mentioned "use the CLT"? What would that mean? It seems like they
+just want me to claim that this maximum likelihood estimator produces estimates
+that are like means or sums of independent observations and that thus we know
+that the sampling distribution will be Normal. Is this right?  If so, then how
+would I know something about the spread or center of this Normal distribution?
+Is this estimator unbiased? If not, what are its properties such that I can
+know which Normal distribution to use for statistical inference."
+
+Even if I thought that the center of the distribution of $\hat{\theta}$ is
+somehow centered on $\theta$, I am wondering about how to represent the idea
+that a larger sample is more information (and that thus a larger sample should
+have a narrower Normal distribution and shorter confidence intervals).
+
+One thing that I played around with is the following:
+
+  Look at the following four log-likelihood functions with the same
+  maximum of $\hat{\theta}=.025$. The vertical black line is at the
+  mle estimate. The gray horizontal lines are at the maximum of each
+  likelihood function.
+
+```{r morellfns}
+Log.L.exp.n10.fn <- function(theta = x) {
+  10 * log(theta) - theta * 400
+}
+Log.L.exp.n20.fn <- function(theta = x) {
+  20 * log(theta) - theta * 800
+}
+Log.L.exp.n41.fn <- function(theta = x) {
+  41 * log(theta) - theta * 1640
+}
+Log.L.exp.n100.fn <- function(theta = x) {
+  100 * log(theta) - theta * 4000
+}
+proposed.thetas <- seq(.01, .06)
+## Setup the y-axis range so all three likelihood functions can go on the same plot.
+yrange <- range(
+  Log.L.exp.n10.fn(theta = proposed.thetas),
+  Log.L.exp.n20.fn(theta = proposed.thetas),
+  Log.L.exp.n41.fn(theta = proposed.thetas),
+  Log.L.exp.n100.fn(theta = proposed.thetas)
+)
+```
+
+
+```{r moreloglikplots,fig.width=4,fig.height=4,out.width='.6\\textwidth'}
+par(mfrow = c(1, 1))
+curve(Log.L.exp.n100.fn(theta = x),
+  from = .01, to = .06, ylim = yrange, ylab = "Log-Likelihood",
+  xlab = expression(theta)
+)
+curve(Log.L.exp.n41.fn(theta = x), from = .01, to = .06, ylim = yrange, add = TRUE, col = "green")
+curve(Log.L.exp.n20.fn(theta = x), from = .01, to = .06, ylim = yrange, add = TRUE, col = "blue")
+curve(Log.L.exp.n10.fn(theta = x), from = .01, to = .06, ylim = yrange, add = TRUE, col = "red")
+abline(v = c(.025, .02), col = c("black", "gray"))
+abline(
+  h = c(
+    Log.L.exp.n100.fn(theta = .025),
+    Log.L.exp.n41.fn(theta = .025),
+    Log.L.exp.n20.fn(theta = .025),
+    Log.L.exp.n10.fn(theta = .025)
+  ),
+  col = "gray"
+)
+text(
+  rep(.05, 4),
+  c(
+    Log.L.exp.n100.fn(theta = .05),
+    Log.L.exp.n41.fn(theta = .05),
+    Log.L.exp.n20.fn(theta = .05),
+    Log.L.exp.n10.fn(theta = .05)
+  ),
+  c("n=100", "n=41", "n=20", "n=10")
+)
+```
+
+If you took a proposed $\theta=.025$ and another value close by, like
+.02 (shown by the vertical gray line), and you subtracted the value of
+the likelihood function at .025 from the value at .02 or .01, which
+likelihood function would produce the largest difference? What aspects of the
+curves seem to capture the idea of "information"?
+
+```{r }
+## The log likelihood functions evaluated at the maximum
+themle <- c(
+  n100 = Log.L.exp.n100.fn(theta = .025),
+  n41 = Log.L.exp.n41.fn(theta = .025),
+  n20 = Log.L.exp.n20.fn(theta = .025),
+  n10 = Log.L.exp.n10.fn(theta = .025)
+)
+## The log likelihood functions evaluated close to the maximum
+notmlebutclose <- c(
+  Log.L.exp.n100.fn(theta = .02),
+  Log.L.exp.n41.fn(theta = .02),
+  Log.L.exp.n20.fn(theta = .02),
+  Log.L.exp.n10.fn(theta = .02)
+)
+themle - notmlebutclose ## The difference in log likelihood.
+```
+
+I want some measure of the curve in the likelihood around the maximum. What is
+this "hessian" thing that I've seen people talk about online? How can it help
+us here?
+
+
+So, what have we done? We have an estimate and a confidence interval. But what
+do they mean? It seems as if the answer has to do not with repeated sampling
+from some population or repeated assigning of some treatment, but with the
+"population" referring to all the ways that the
+outcome-value-generating-machine could produce the values (here the machine is
+an exponential machine --- we plug in some values and it produces other
+values, but the machine is stochastic, it is a probability density function).
+How can I understand what is going on here? It is clearly very cool that if I
+can articulate a dgp and also say how the individual dgp's go together (here
+they are all independent and the same and so I just multiple them), then I can
+write a likelihood function, and have a useful estimate of a parameter be the
+value of the parameter at the maximum of the function AND the standard error
+arising from the curvature of the function at the maximum. I'm just wondering
+how to communicate about this approach with my bosses. Thanks much for your
+help!"
+
+## Covariates
+
+"Someone then says, 'Explanatory variables like interventions as well as
+covariates can be used in MLE by parameterizing your likelihood function.'
+Again, I found this puzzling. So, I asked for code. But the code they sent was
+difficult for me to understand. Can you explain how what is going on is
+'parameterizing' a likelihood function and how it works to enable us to 'use'
+covariates and explanatory variables to learn about relationships? What are we
+learning about when we do this anyway? Can you interpret the code and the results below?"
+
+
+
+```{r parameterizedlikelihood}
+load(url("http://www.jakebowers.org/PS531Data/cabinet-data.rda"))
+## x-1 means maj=0 and else=1, 1-(x-1) means maj=1 else=0
+cabdata$numstatus <- 1 - (cabdata$NUMST2 - 1)
+## No fractional durations. Count number of weeks.
+cabdata$durnew <- ifelse(cabdata$DURAT < 1, 0, cabdata$DURAT)
+themf <- model.frame(durnew ~ CRISIS + numstatus + ITALY, data = cabdata)
+X <- model.matrix(durnew ~ CRISIS + numstatus + ITALY, data = themf)
+y <- model.response(themf)
+## Modeling *number of days* or *count* of days.
+pois_log_lik <- function(theta, y, X) {
+  mu <- X %*% theta
+  if (any(mu <= 0)) {
+    ## mu cannot be less than 0
+    return(-99999)
+  }
+  ll <- sum(dpois(t(y), lambda = exp(mu), log = TRUE))
+  # ll <- sum(log(dpois(t(y), lambda =  exp(mu), log = FALSE)))
+  ll
+}
+starting_values1 <- c(1 / mean(cabdata$durnew), .01, .01, .01)
+names(starting_values1) <- colnames(X)
+starting_values2 <- c(0, 0, 0, 0)
+names(starting_values2) <- colnames(X)
+## Testing the functions
+pois_log_lik(theta = starting_values1, y = y, X = X)
+pois_log_lik(theta = starting_values2, y = y, X = X)
+pois_log_lik(theta = starting_values2 + .01, y = y, X = X)
+themle_pois <- optim(
+  par = starting_values1, y = y, X = X, fn = pois_log_lik, hessian = TRUE, method = "BFGS",
+  control = list(fnscale = -1, trace = TRUE)
+)
+themleses_pois <- sqrt(diag(solve(-1 * themle_pois$hessian[1:4, 1:4])))
+themlecoefs_pois <- cbind(mlebhat = themle_pois$par[1:4], mlesehat = themleses.exp[1:4])
+## How sensitive are these results to starting values?
+themle_pois2 <- optim(
+  par = c(1, 0, 0, 0), y = y, X = X, fn = pois_log_lik, hessian = TRUE, method = "BFGS",
+  control = list(fnscale = -1, trace = TRUE)
+)
+themle_pois3 <- optim(
+  par = c(.1, 1, 1, 1), y = y, X = X, fn = pois_log_lik, hessian = TRUE, method = "BFGS",
+  control = list(fnscale = -1, trace = TRUE)
+)
+themle_pois$par
+themle_pois2$par
+themle_pois3$par
+## hmmm.... fitdistrplus ?? https://cran.r-project.org/web/packages/fitdistrplus/vignettes/paper2JSS.pdf
+## https://github.com/petrkeil/Statistics/blob/master/Lecture%203%20-%20poisson_regression/poisson_regression.Rmd
+glm1 <- glm(durnew ~ CRISIS + numstatus + ITALY, family = poisson(link = "log"), data = cabdata)
+vglm1 <- vglm(durnew ~ CRISIS + numstatus + ITALY, poissonff(link = "loglink"), data = cabdata)
+```
+
+Useful reading:
+
+ - \citealp{ward2018maximum} (probably the best one)
+
+ - \citealp[Chap 9.3.3]{fox2008applied}
+
+ - \citealp[Use the 2009 Version of]{green1991mle}  from \url{https://sites.google.com/site/donaldpgreen/plsc504}
+
+ - \citealp[Chap 5]{fox2011r} and see also \url{http://socserv.socsci.mcmaster.ca/jfox/Courses/SPIDA/index.html}
+
+ - \citealp[Chap 4]{king89}
+
+ - \citealp[Chap 1,2]{cox:2006}
+
+
+# References
